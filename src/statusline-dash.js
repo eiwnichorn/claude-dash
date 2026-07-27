@@ -291,6 +291,7 @@ function renderTokensCost(data) {
   const input = data.context_window && data.context_window.total_input_tokens;
   const output = data.context_window && data.context_window.total_output_tokens;
   const cost = data.cost && data.cost.total_cost_usd;
+  const cacheRead = data.context_window && data.context_window.current_usage && data.context_window.current_usage.cache_read_input_tokens;
 
   if (!input && !output && cost == null) return `${C.DIM}---${C.RESET}`;
 
@@ -299,6 +300,11 @@ function renderTokensCost(data) {
     const inStr = formatTokens(input) || '?';
     const outStr = formatTokens(output) || '?';
     parts.push(`↑${inStr} ↓${outStr}`);
+  }
+  if (cacheRead != null && cacheRead > 0 && input > 0) {
+    const cacheRate = Math.round((cacheRead / input) * 100);
+    const cacheStr = formatTokens(cacheRead);
+    parts.push(`⚡${cacheStr}(${cacheRate}%)`);
   }
   if (cost != null) {
     parts.push(formatCost(cost));
