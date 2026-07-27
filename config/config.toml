@@ -1,0 +1,28 @@
+# claude-dash configuration
+# Line layout (comma-separated segments)
+line1 = "git,model+effort,tokens+cost,chum"
+line2 = "hyper,5h,7d,ctx"
+
+# Separators
+section_sep = " | "
+item_sep = " · "
+
+# Git
+git_show = "branch+dirty"  # "branch" or "branch+dirty"
+
+# Thresholds
+ctx_warn = 70
+ctx_crit = 80
+rate_warn = 80
+rate_crit = 90
+
+# Hyper
+hyper_timeout_ms = 2000
+
+# Bar style
+bar_width = 8
+bar_filled = "█"
+bar_empty = "░"
+
+# Spacing
+line_spacing = 0  # number of blank lines between line1 and line2
