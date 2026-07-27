@@ -34,8 +34,9 @@ const HYPER_UPDATE_SCRIPT = path.join(HOME, '.claude', 'hyper-update.js');
 
 // ── Default config ───────────────────────────────────────────
 const DEFAULTS = {
-  line1: 'git,model+effort,tokens+cost,chum',
-  line2: 'hyper,5h,7d,ctx',
+  line1: 'git,model+effort,chum',
+  line2: 'tokens+cost',
+  line3: 'hyper,5h,7d,ctx',
   section_sep: ' | ',
   item_sep: ' · ',
   git_show: 'branch+dirty',
@@ -47,7 +48,7 @@ const DEFAULTS = {
   bar_width: '8',
   bar_filled: '█',
   bar_empty: '░',
-  line_spacing: '0', // number of blank lines between line1 and line2
+  line_spacing: '0', // number of blank lines between lines
 };
 
 // ── Simple TOML parser ───────────────────────────────────────
@@ -227,37 +228,54 @@ function colorForRate(pct, warn, crit) {
 
 function renderGit(data, config, cwd) {
   const branch = readGitBranch(cwd);
-  if (!branch) return `${C.DIM}---${C.RESET}`;
-
+  
+  // Helper to format path with ~ for home directory
+  const formatPath = (dir) => {
+    const home = process.env.HOME || process.env.USERPROFILE || '';
+    if (dir.startsWith(home)) {
+      return '~' + dir.slice(home.length);
+    }
+    return dir;
+  };
+  
   // Get repo name (parent directory of git root)
   let repoName = '';
-  try {
-    const gitRoot = require('child_process').execSync('git rev-parse --show-toplevel', {
-      cwd,
-      timeout: 500,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'ignore'],
-    }).trim();
-    repoName = require('path').basename(gitRoot);
-  } catch {
-    // git rev-parse failed (dubious ownership, not a repo, etc.)
-    // Fallback: use current directory name
-    repoName = require('path').basename(cwd);
+  if (branch) {
+    try {
+      const gitTimeout = parseInt(config.git_timeout_ms || 500, 10);
+      const gitRoot = require('child_process').execSync('git rev-parse --show-toplevel', {
+        cwd,
+        timeout: gitTimeout,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'ignore'],
+      }).trim();
+      repoName = require('path').basename(gitRoot);
+    } catch {
+      // git rev-parse failed (dubious ownership, not a repo, etc.)
+      // Fallback: use current directory name
+      repoName = require('path').basename(cwd);
+    }
   }
 
-  let result = repoName ? `${repoName}/${branch}` : branch;
+  // If no branch, show the formatted path
+  if (!branch) {
+    return formatPath(cwd);
+  }
+
+  let result = `⌥ ${repoName ? `${repoName}${branch === 'main' ? ':' : ' 🌿 '}${branch}` : branch}`;
 
   // Worktree suffix
   if (data.workspace && data.workspace.git_worktree) {
-    result += `+${data.workspace.git_worktree}`;
+    result += `/${data.workspace.git_worktree}`;
   }
 
   // Dirty detection (only in branch+dirty mode)
   if (config.git_show === 'branch+dirty') {
     try {
+      const statusTimeout = parseInt(config.git_status_timeout_ms || 500, 10);
       const status = require('child_process').execSync('git status --porcelain', {
         cwd,
-        timeout: 500,
+        timeout: statusTimeout,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'ignore'],
       });
@@ -333,11 +351,43 @@ function renderChum(data, cwd) {
   return `chum ${C.GREEN}✔ ${rel}${C.RESET}`;
 }
 
-function renderHyper() {
+function renderHyper(config) {
   try {
     const cache = JSON.parse(fs.readFileSync(HYPER_CACHE_FILE, 'utf-8'));
     if (cache && cache.balance != null) {
-      return `${C.HYPER_GEM} ${cache.balance} hc`;
+      const dailyLimit = parseInt(config.hyper_daily_limit || 250, 10);
+      const used = dailyLimit - cache.balance;
+      const pct = (used / dailyLimit) * 100;
+      
+      // Calculate time until refresh (22:06 UTC+1 = 21:06 UTC)
+      const now = new Date();
+      const utcHours = now.getUTCHours();
+      const utcMinutes = now.getUTCMinutes();
+      const targetHour = 21; // 22:06 UTC+1 = 21:06 UTC
+      const targetMinute = 6;
+      
+      let hoursUntil = targetHour - utcHours;
+      let minutesUntil = targetMinute - utcMinutes;
+      
+      if (minutesUntil < 0) {
+        hoursUntil--;
+        minutesUntil += 60;
+      }
+      if (hoursUntil < 0) {
+        hoursUntil += 24;
+      }
+      
+      const refreshStr = `${hoursUntil}h${minutesUntil}m`;
+      
+      // Apply color based on percentage used
+      const warn = parseInt(config.hyper_warn || 80, 10);
+      const crit = parseInt(config.hyper_crit || 90, 10);
+      
+      let color = C.GREEN;
+      if (pct >= crit) color = C.RED;
+      else if (pct >= warn) color = C.ORANGE;
+      
+      return `${color}${C.HYPER_GEM} ${cache.balance} hc ${refreshStr}${C.RESET}`;
     }
   } catch {
     // cache missing or unreadable
@@ -394,62 +444,55 @@ function main() {
   const config = readConfig();
   const cwd = (data.workspace && data.workspace.current_dir) || process.cwd();
 
-  // ── Line 1 segments ──────────────────────────────────────
-  const line1Config = (config.line1 || DEFAULTS.line1).split(',').map(s => s.trim());
-  const line1Parts = [];
-  for (const seg of line1Config) {
-    switch (seg) {
-      case 'git':
-        line1Parts.push(renderGit(data, config, cwd));
-        break;
-      case 'model+effort':
-        line1Parts.push(renderModelEffort(data));
-        break;
-      case 'tokens+cost':
-        line1Parts.push(renderTokensCost(data));
-        break;
-      case 'chum':
-        line1Parts.push(renderChum(data, cwd));
-        break;
+// ── Segment registry ─────────────────────────────────────────
+const SEGMENTS = {
+  'git': (data, config, cwd) => renderGit(data, config, cwd),
+  'model+effort': (data) => renderModelEffort(data),
+  'tokens+cost': (data) => renderTokensCost(data),
+  'chum': (data, config, cwd) => renderChum(data, cwd),
+  'hyper': (data, config) => renderHyper(config),
+  'ctx': (data, config) => renderCtx(data, config),
+  '5h': (data, config) => {
+    const rl = data.rate_limits && data.rate_limits.five_hour;
+    return renderRateLimit('5h', rl && rl.used_percentage, rl && rl.resets_at, config);
+  },
+  '7d': (data, config) => {
+    const rl = data.rate_limits && data.rate_limits.seven_day;
+    return renderRateLimit('7d', rl && rl.used_percentage, rl && rl.resets_at, config);
+  },
+};
+
+// ── Render a line from config ────────────────────────────────
+function renderLine(lineConfig, data, config, cwd) {
+  const segments = lineConfig.split(',').map(s => s.trim());
+  const parts = [];
+  for (const seg of segments) {
+    const renderer = SEGMENTS[seg];
+    if (renderer) {
+      parts.push(renderer(data, config, cwd));
     }
   }
+  return parts.join(config.section_sep || DEFAULTS.section_sep);
+}
 
-  // ── Line 2 segments ──────────────────────────────────────
-  const line2Config = (config.line2 || DEFAULTS.line2).split(',').map(s => s.trim());
-  const line2Parts = [];
-  for (const seg of line2Config) {
-    switch (seg) {
-      case 'hyper':
-        line2Parts.push(renderHyper());
-        break;
-      case 'ctx':
-        line2Parts.push(renderCtx(data, config));
-        break;
-      case '5h':
-        {
-          const rl = data.rate_limits && data.rate_limits.five_hour;
-          line2Parts.push(renderRateLimit('5h',
-            rl && rl.used_percentage,
-            rl && rl.resets_at,
-            config));
-        }
-        break;
-      case '7d':
-        {
-          const rl = data.rate_limits && data.rate_limits.seven_day;
-          line2Parts.push(renderRateLimit('7d',
-            rl && rl.used_percentage,
-            rl && rl.resets_at,
-            config));
-        }
-        break;
+  // ── Sync refresh interval to settings.json ─────────────────
+  const refreshInterval = parseInt(config.refresh_interval_s || 300, 10);
+  const settingsPath = path.join(HOME, '.claude', 'settings.json');
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    if (settings.statusLine && settings.statusLine.refreshInterval !== refreshInterval) {
+      settings.statusLine.refreshInterval = refreshInterval;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
     }
+  } catch {
+    // settings.json missing or invalid — not critical
   }
 
+  // ── Render lines ─────────────────────────────────────────
   const sep = config.section_sep || DEFAULTS.section_sep;
-  const itemSep = config.item_sep || DEFAULTS.item_sep;
-  const line1 = line1Parts.join(sep);
-  const line2 = line2Parts.join(itemSep);
+  const line1 = renderLine(config.line1 || DEFAULTS.line1, data, config, cwd);
+  const line2 = renderLine(config.line2 || DEFAULTS.line2, data, config, cwd);
+  const line3 = renderLine(config.line3 || DEFAULTS.line3, data, config, cwd);
 
   console.log(line1);
   
@@ -460,6 +503,12 @@ function main() {
   }
   
   console.log(line2);
+  
+  for (let i = 0; i < spacing; i++) {
+    console.log('');
+  }
+  
+  console.log(line3);
 
   // ── Spawn background Hyper update ────────────────────────
   try {
