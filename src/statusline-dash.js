@@ -291,7 +291,9 @@ function renderTokensCost(data) {
   const input = data.context_window && data.context_window.total_input_tokens;
   const output = data.context_window && data.context_window.total_output_tokens;
   const cost = data.cost && data.cost.total_cost_usd;
-  const cacheRead = data.context_window && data.context_window.current_usage && data.context_window.current_usage.cache_read_input_tokens;
+  const currentUsage = data.context_window && data.context_window.current_usage;
+  const cacheRead = currentUsage && currentUsage.cache_read_input_tokens;
+  const cacheWrite = currentUsage && currentUsage.cache_creation_input_tokens;
 
   if (!input && !output && cost == null) return `${C.DIM}---${C.RESET}`;
 
@@ -301,10 +303,18 @@ function renderTokensCost(data) {
     const outStr = formatTokens(output) || '?';
     parts.push(`↑${inStr} ↓${outStr}`);
   }
-  if (cacheRead != null && cacheRead > 0 && input > 0) {
-    const cacheRate = Math.round((cacheRead / input) * 100);
-    const cacheStr = formatTokens(cacheRead);
-    parts.push(`⚡${cacheStr}(${cacheRate}%)`);
+  if (currentUsage) {
+    const cacheParts = [];
+    if (cacheWrite != null && cacheWrite > 0) {
+      cacheParts.push(`W:${formatTokens(cacheWrite)}`);
+    }
+    if (cacheRead != null && cacheRead > 0) {
+      cacheParts.push(`R:${formatTokens(cacheRead)}`);
+    }
+    if (cacheParts.length > 0 && input > 0) {
+      const cacheRate = Math.round(((cacheRead || 0) / input) * 100);
+      parts.push(`⚡${cacheParts.join(' ')}(${cacheRate}%)`);
+    }
   }
   if (cost != null) {
     parts.push(formatCost(cost));
