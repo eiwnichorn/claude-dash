@@ -28,15 +28,19 @@ const C = {
 // ── Paths ────────────────────────────────────────────────────
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
 const CONFIG_DIR = path.join(HOME, '.claude', 'dash');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.toml');
+const CONFIG_FILE = process.env.DASH_CONFIG || path.join(CONFIG_DIR, 'config.toml');
 const HYPER_CACHE_FILE = path.join(CONFIG_DIR, 'hyper-cache.json');
 const HYPER_UPDATE_SCRIPT = path.join(HOME, '.claude', 'hyper-update.js');
 
 // ── Default config ───────────────────────────────────────────
+// Mirrors this operator's real, tuned ~/.claude/dash/config.toml
+// (reconciled 2026-08-04) -- a fresh clone/install now behaves like
+// the tuned live setup out of the box, config.toml only needed to
+// deviate from it.
 const DEFAULTS = {
-  line1: 'git,model+effort,chum',
-  line2: 'tokens+cost',
-  line3: 'hyper,5h,7d,ctx',
+  line1: 'hyper,5h,7d,ctx',
+  line2: 'model+effort,cost,tokens',
+  line3: 'git,chum',
   section_sep: ' | ',
   item_sep: ' · ',
   git_show: 'branch+dirty',
@@ -45,10 +49,25 @@ const DEFAULTS = {
   rate_warn: '80',
   rate_crit: '90',
   hyper_timeout_ms: '2000',
-  bar_width: '8',
+  bar_width: '6',
   bar_filled: '█',
   bar_empty: '░',
-  line_spacing: '0', // number of blank lines between lines
+  // Padding
+  segment_padding_left: '0',
+  segment_padding_right: '0',
+  // Line separators
+  line_separator: 'false',
+  line_separator_char: '─',
+  line_separator_color: 'dim',
+  // Timeouts
+  git_timeout_ms: '500',
+  git_status_timeout_ms: '500',
+  refresh_interval_s: '15', // Claude Code status bar refresh (from cache)
+  // Hyper
+  hyper_daily_limit: '250',
+  hyper_refresh_time: '22:06', // UTC+1
+  hyper_warn: '80',
+  hyper_crit: '90',
 };
 
 // ── Simple TOML parser ───────────────────────────────────────
@@ -320,6 +339,18 @@ function renderGit(data, config, cwd) {
   return result;
 }
 
+function renderModel(data) {
+  const model = data.model && data.model.display_name;
+  if (!model) return `${C.DIM}---${C.RESET}`;
+  return model;
+}
+
+function renderEffort(data) {
+  const effort = data.effort && data.effort.level;
+  if (!effort) return `${C.DIM}---${C.RESET}`;
+  return effort;
+}
+
 function renderModelEffort(data) {
   const model = data.model && data.model.display_name;
   const effort = data.effort && data.effort.level;
@@ -328,15 +359,14 @@ function renderModelEffort(data) {
   return model || effort;
 }
 
-function renderTokensCost(data) {
+function renderTokens(data) {
   const input = data.context_window && data.context_window.total_input_tokens;
   const output = data.context_window && data.context_window.total_output_tokens;
-  const cost = data.cost && data.cost.total_cost_usd;
   const currentUsage = data.context_window && data.context_window.current_usage;
   const cacheRead = currentUsage && currentUsage.cache_read_input_tokens;
   const cacheWrite = currentUsage && currentUsage.cache_creation_input_tokens;
 
-  if (!input && !output && cost == null) return `${C.DIM}---${C.RESET}`;
+  if (!input && !output) return `${C.DIM}---${C.RESET}`;
 
   const parts = [];
   if (input || output) {
@@ -357,9 +387,27 @@ function renderTokensCost(data) {
       parts.push(`⚡${cacheParts.join(' ')}(${cacheRate}%)`);
     }
   }
-  if (cost != null) {
-    parts.push(formatCost(cost));
+  return parts.join(' · ');
+}
+
+function renderCost(data) {
+  const cost = data.cost && data.cost.total_cost_usd;
+  if (cost == null) return `${C.DIM}---${C.RESET}`;
+  return formatCost(cost);
+}
+
+function renderTokensCost(data) {
+  const tokens = renderTokens(data);
+  const cost = renderCost(data);
+
+  if (tokens === `${C.DIM}---${C.RESET}` && cost === `${C.DIM}---${C.RESET}`) {
+    return `${C.DIM}---${C.RESET}`;
   }
+
+  const parts = [];
+  if (tokens !== `${C.DIM}---${C.RESET}`) parts.push(tokens);
+  if (cost !== `${C.DIM}---${C.RESET}`) parts.push(cost);
+
   return parts.join(' · ');
 }
 
@@ -400,7 +448,7 @@ function renderHyper(config) {
         hoursUntil += 24;
       }
       
-      const refreshStr = `${hoursUntil}h${minutesUntil}m`;
+      const refreshStr = `${C.CYAN}${hoursUntil}h${minutesUntil}m${C.RESET}`;
       
       // Apply color based on percentage used
       const warn = parseInt(config.hyper_warn || 80, 10);
@@ -410,7 +458,7 @@ function renderHyper(config) {
       if (pct >= crit) color = C.RED;
       else if (pct >= warn) color = C.ORANGE;
       
-      return `${color}${C.HYPER_GEM} ${cache.balance} hc ${refreshStr}${C.RESET}`;
+      return `${color}${C.HYPER_GEM} ${cache.balance} ${refreshStr}${C.RESET}`;
     }
   } catch {
     // cache missing or unreadable
@@ -472,7 +520,11 @@ function main() {
 // ── Segment registry ─────────────────────────────────────────
 const SEGMENTS = {
   'git': (data, config, cwd) => renderGit(data, config, cwd),
+  'model': (data) => renderModel(data),
+  'effort': (data) => renderEffort(data),
   'model+effort': (data) => renderModelEffort(data),
+  'tokens': (data) => renderTokens(data),
+  'cost': (data) => renderCost(data),
   'tokens+cost': (data) => renderTokensCost(data),
   'chum': (data, config, cwd) => renderChum(data, cwd),
   'hyper': (data, config) => renderHyper(config),
@@ -491,13 +543,43 @@ const SEGMENTS = {
 function renderLine(lineConfig, data, config, cwd) {
   const segments = lineConfig.split(',').map(s => s.trim());
   const parts = [];
+  const padLeft = ' '.repeat(parseInt(config.segment_padding_left || 0, 10));
+  const padRight = ' '.repeat(parseInt(config.segment_padding_right || 0, 10));
+
   for (const seg of segments) {
     const renderer = SEGMENTS[seg];
     if (renderer) {
-      parts.push(renderer(data, config, cwd));
+      let rendered = renderer(data, config, cwd);
+      // Apply padding
+      if (padLeft || padRight) {
+        rendered = padLeft + rendered + padRight;
+      }
+      parts.push(rendered);
     }
   }
   return parts.join(config.section_sep || DEFAULTS.section_sep);
+}
+
+// ── Render line separator ────────────────────────────────────
+function renderLineSeparator(config, width) {
+  if (config.line_separator !== 'true') return null;
+  const char = config.line_separator_char || '─';
+  const color = config.line_separator_color ? getAnsiColor(config.line_separator_color) : '';
+  const reset = color ? C.RESET : '';
+  return color + char.repeat(width) + reset;
+}
+
+// ── Get ANSI color code ──────────────────────────────────────
+function getAnsiColor(colorName) {
+  const colors = {
+    'red': C.RED,
+    'green': C.GREEN,
+    'orange': C.ORANGE,
+    'cyan': C.CYAN,
+    'dim': C.DIM,
+    'bold': C.BOLD,
+  };
+  return colors[colorName] || '';
 }
 
   // ── Sync refresh interval to settings.json ─────────────────
@@ -519,21 +601,22 @@ function renderLine(lineConfig, data, config, cwd) {
   const line2 = renderLine(config.line2 || DEFAULTS.line2, data, config, cwd);
   const line3 = renderLine(config.line3 || DEFAULTS.line3, data, config, cwd);
 
-  console.log(line1);
-  
-  // Add vertical spacing between lines
-  const spacing = parseInt(config.line_spacing || DEFAULTS.line_spacing, 10);
-  for (let i = 0; i < spacing; i++) {
-    console.log('');
+  // Get terminal width for line separators
+  const termWidth = parseInt(process.env.COLUMNS || 80, 10);
+
+  // Render with line separators if enabled
+  if (config.line_separator === 'true') {
+    const separator = renderLineSeparator(config, termWidth);
+    console.log(line1);
+    console.log(separator);
+    console.log(line2);
+    console.log(separator);
+    console.log(line3);
+  } else {
+    console.log(line1);
+    console.log(line2);
+    console.log(line3);
   }
-  
-  console.log(line2);
-  
-  for (let i = 0; i < spacing; i++) {
-    console.log('');
-  }
-  
-  console.log(line3);
 
   // ── Spawn background Hyper update ────────────────────────
   try {
