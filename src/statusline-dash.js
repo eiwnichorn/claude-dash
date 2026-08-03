@@ -99,6 +99,29 @@ function readStdin() {
   }
 }
 
+// ── Write a small usage snapshot each invocation ─────────────
+// Claude Code injects rate_limits/model/context_window/cost into this
+// script's stdin payload on every render, but that payload only ever
+// reaches this process -- an agent has no tool to query it directly.
+// Persisting the fields this statusline already renders gives an agent
+// a file to Read instead, same pattern as HYPER_CACHE_FILE.
+const USAGE_SNAPSHOT_FILE = path.join(CONFIG_DIR, 'usage-snapshot.json');
+function writeUsageSnapshot(data) {
+  try {
+    const snapshot = {
+      updated_at: new Date().toISOString(),
+      model: data.model || null,
+      rate_limits: data.rate_limits || null,
+      context_window: data.context_window || null,
+      cost: data.cost || null,
+    };
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(USAGE_SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2));
+  } catch {
+    // Never let snapshot bookkeeping break the statusline itself.
+  }
+}
+
 // ── Read git branch from .git/HEAD ────────────────────────────
 function readGitBranch(cwd) {
   try {
@@ -440,6 +463,8 @@ function main() {
     console.log(`${C.DIM}Waiting for session...${C.RESET}`);
     return;
   }
+
+  writeUsageSnapshot(data);
 
   const config = readConfig();
   const cwd = (data.workspace && data.workspace.current_dir) || process.cwd();
