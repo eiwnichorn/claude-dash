@@ -16,6 +16,10 @@ A two-line status bar for Claude Code that displays session identity and resourc
 - **Chum tracking** — session save status with relative timestamps
 - **Color-coded thresholds** — green/orange/red for context, rate limits
 - **Windows compatible** — tested on MSYS/Git Bash
+- **Usage snapshot** — writes `~/.claude/dash/usage-snapshot.json`
+  (rate_limits/model/context_window/cost) on every render, so an agent
+  running inside the session can read its own current usage/rate-limit
+  state — Claude Code has no other tool-callable way to expose this
 
 ## Installation
 
@@ -130,6 +134,30 @@ line_spacing = 0
    - Fetches Hyper API
    - Writes cache file
    - Exits
+
+### Usage Snapshot (agent-facing)
+
+`statusline-dash.js` writes `~/.claude/dash/usage-snapshot.json` on
+every invocation, mirroring the `HYPER_CACHE_FILE` pattern:
+
+```json
+{
+  "updated_at": "2026-08-03T23:28:11.982Z",
+  "model": { "id": "claude-sonnet-5", "display_name": "Sonnet 5" },
+  "rate_limits": { "five_hour": {...}, "seven_day": {...} },
+  "context_window": {...},
+  "cost": {...}
+}
+```
+
+This exists because Claude Code has no other tool-callable way to
+expose current usage/rate-limits to an agent mid-session — the
+underlying `rate_limits` field is real and officially documented in
+the statusline hook's own schema (`code.claude.com/docs/en/statusline`),
+but there's no independent API/CLI to query it on demand. Freshness is
+inherently tied to render cadence (`refresh_interval_s`) and only
+populates after the first API response in a session — always a turn or
+so stale, not live-on-demand.
 
 ### Anti-Lockout Guarantees
 
