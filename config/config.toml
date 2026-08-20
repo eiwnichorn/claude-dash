@@ -1,11 +1,36 @@
 # claude-dash configuration
+#
+# Available segments:
+#   git          - Git branch/repo info (shows ⌥ repo:branch or ⌥ repo 🌿 branch)
+#   model        - Current model name (e.g., "Opus")
+#   effort       - Reasoning effort level (e.g., "high")
+#   model+effort - Combined model and effort (e.g., "Opus · high")
+#   tokens       - Token usage with cache stats (↑in ↓out · ⚡cache%)
+#   cost         - Session cost in USD (e.g., "$0.12")
+#   tokens+cost  - Combined tokens and cost
+#   chum         - Chum session status (✔ saved or ✘ unsaved)
+#   hyper        - Hyper credit balance with reset countdown (◆ balance reset)
+#   ctx          - Context window usage bar (ctx ████░░░ 42%)
+#   5h           - 5-hour rate limit with countdown
+#   7d           - 7-day rate limit with countdown
+#
 # Line layout (comma-separated segments)
-line1 = "git,model+effort,tokens+cost,chum"
-line2 = "hyper,5h,7d,ctx"
+line1 = "hyper,5h,7d,ctx"
+line2 = "model+effort,cost,tokens"
+line3 = "git,chum"
 
 # Separators
 section_sep = " | "
 item_sep = " · "
+
+# Padding
+segment_padding_left = 0
+segment_padding_right = 0
+
+# Line separators
+line_separator = false
+line_separator_char = "─"
+line_separator_color = "dim"
 
 # Git
 git_show = "branch+dirty"  # "branch" or "branch+dirty"
@@ -16,13 +41,16 @@ ctx_crit = 80
 rate_warn = 80
 rate_crit = 90
 
-# Hyper
-hyper_timeout_ms = 2000
+# Timeouts
+git_timeout_ms = 500
+git_status_timeout_ms = 500
+refresh_interval_s = 15  # Claude Code status bar refresh, seconds
+hyper_daily_limit = 250
+hyper_refresh_time = "14:27"  # UTC+1 (adjust to your timezone)
+hyper_warn = 80
+hyper_crit = 90
 
 # Bar style
-bar_width = 8
+bar_width = 6
 bar_filled = "█"
 bar_empty = "░"
-
-# Spacing
-line_spacing = 0  # number of blank lines between line1 and line2
