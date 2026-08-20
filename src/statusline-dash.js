@@ -81,13 +81,14 @@ function parseToml(text) {
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
     let value = trimmed.slice(eqIdx + 1).trim();
-    // Strip quotes
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    // Strip trailing comment (only for unquoted values)
-    if (!value.startsWith('"') && !value.startsWith("'")) {
+    // Quoted value: take only the content between the quotes — anything
+    // after the closing quote (e.g. a trailing "# comment") is discarded.
+    if (value.startsWith('"') || value.startsWith("'")) {
+      const quote = value[0];
+      const closeIdx = value.indexOf(quote, 1);
+      if (closeIdx !== -1) value = value.slice(1, closeIdx);
+    } else {
+      // Unquoted value: strip a trailing comment, if any.
       const commentIdx = value.indexOf('#');
       if (commentIdx !== -1) value = value.slice(0, commentIdx).trim();
     }
@@ -351,15 +352,17 @@ function renderEffort(data) {
   return effort;
 }
 
-function renderModelEffort(data) {
+function renderModelEffort(data, config) {
   const model = data.model && data.model.display_name;
   const effort = data.effort && data.effort.level;
+  const itemSep = config.item_sep || DEFAULTS.item_sep;
   if (!model && !effort) return `${C.DIM}---${C.RESET}`;
-  if (model && effort) return `${model} · ${effort}`;
+  if (model && effort) return `${model}${itemSep}${effort}`;
   return model || effort;
 }
 
-function renderTokens(data) {
+function renderTokens(data, config) {
+  const itemSep = config.item_sep || DEFAULTS.item_sep;
   const input = data.context_window && data.context_window.total_input_tokens;
   const output = data.context_window && data.context_window.total_output_tokens;
   const currentUsage = data.context_window && data.context_window.current_usage;
@@ -387,7 +390,7 @@ function renderTokens(data) {
       parts.push(`⚡${cacheParts.join(' ')}(${cacheRate}%)`);
     }
   }
-  return parts.join(' · ');
+  return parts.join(itemSep);
 }
 
 function renderCost(data) {
@@ -396,8 +399,9 @@ function renderCost(data) {
   return formatCost(cost);
 }
 
-function renderTokensCost(data) {
-  const tokens = renderTokens(data);
+function renderTokensCost(data, config) {
+  const itemSep = config.item_sep || DEFAULTS.item_sep;
+  const tokens = renderTokens(data, config);
   const cost = renderCost(data);
 
   if (tokens === `${C.DIM}---${C.RESET}` && cost === `${C.DIM}---${C.RESET}`) {
@@ -408,7 +412,7 @@ function renderTokensCost(data) {
   if (tokens !== `${C.DIM}---${C.RESET}`) parts.push(tokens);
   if (cost !== `${C.DIM}---${C.RESET}`) parts.push(cost);
 
-  return parts.join(' · ');
+  return parts.join(itemSep);
 }
 
 function renderChum(data, cwd) {
@@ -430,12 +434,13 @@ function renderHyper(config) {
       const used = dailyLimit - cache.balance;
       const pct = (used / dailyLimit) * 100;
       
-      // Calculate time until refresh (22:06 UTC+1 = 21:06 UTC)
+      // Calculate time until refresh. hyper_refresh_time is UTC+1 local time.
       const now = new Date();
       const utcHours = now.getUTCHours();
       const utcMinutes = now.getUTCMinutes();
-      const targetHour = 21; // 22:06 UTC+1 = 21:06 UTC
-      const targetMinute = 6;
+      const refreshMatch = /^(\d{1,2}):(\d{2})$/.exec(String(config.hyper_refresh_time || '').trim());
+      const targetHour = refreshMatch ? ((parseInt(refreshMatch[1], 10) - 1 + 24) % 24) : 21; // default 22:06 UTC+1 = 21:06 UTC
+      const targetMinute = refreshMatch ? parseInt(refreshMatch[2], 10) : 6;
       
       let hoursUntil = targetHour - utcHours;
       let minutesUntil = targetMinute - utcMinutes;
@@ -522,10 +527,10 @@ const SEGMENTS = {
   'git': (data, config, cwd) => renderGit(data, config, cwd),
   'model': (data) => renderModel(data),
   'effort': (data) => renderEffort(data),
-  'model+effort': (data) => renderModelEffort(data),
-  'tokens': (data) => renderTokens(data),
+  'model+effort': (data, config) => renderModelEffort(data, config),
+  'tokens': (data, config) => renderTokens(data, config),
   'cost': (data) => renderCost(data),
-  'tokens+cost': (data) => renderTokensCost(data),
+  'tokens+cost': (data, config) => renderTokensCost(data, config),
   'chum': (data, config, cwd) => renderChum(data, cwd),
   'hyper': (data, config) => renderHyper(config),
   'ctx': (data, config) => renderCtx(data, config),
